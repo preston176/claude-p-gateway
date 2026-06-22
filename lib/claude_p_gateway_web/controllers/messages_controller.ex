@@ -7,6 +7,18 @@ defmodule ClaudePGatewayWeb.MessagesController do
     prompt = build_prompt(messages, Map.get(params, "system"))
     model = Map.get(params, "model")
 
+    if truthy?(Map.get(params, "stream")) do
+      stream(conn, prompt, model)
+    else
+      one_shot(conn, prompt, model)
+    end
+  end
+
+  def create(conn, _params) do
+    send_error(conn, 400, "invalid_request", "messages required and must be a non-empty array")
+  end
+
+  defp one_shot(conn, prompt, model) do
     case Claude.run(prompt, model: model) do
       {:ok, %{text: text, raw: raw}} ->
         json(conn, response_envelope(text, model, raw))
@@ -22,9 +34,19 @@ defmodule ClaudePGatewayWeb.MessagesController do
     end
   end
 
-  def create(conn, _params) do
-    send_error(conn, 400, "invalid_request", "messages required and must be a non-empty array")
+  defp stream(conn, prompt, model) do
+    conn
+    |> put_resp_header("content-type", "text/event-stream")
+    |> put_resp_header("cache-control", "no-cache")
+    |> put_resp_header("connection", "keep-alive")
+    |> send_chunked(200)
+    |> Claude.stream_into(prompt, model: model)
   end
+
+  defp truthy?(true), do: true
+  defp truthy?("true"), do: true
+  defp truthy?(1), do: true
+  defp truthy?(_), do: false
 
   defp build_prompt(messages, system) do
     sys_part = if is_binary(system) and system != "", do: ["System: " <> system], else: []

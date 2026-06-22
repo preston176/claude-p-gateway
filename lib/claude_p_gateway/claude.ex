@@ -2,9 +2,15 @@ defmodule ClaudePGateway.Claude do
   @moduledoc """
   Thin wrapper around the locally-installed `claude` CLI.
 
-  Each call shells out to `claude -p --output-format json` and returns the
-  parsed response. We run the subprocess under `Task.Supervisor` so a stuck
-  or crashing `claude` invocation cannot take the gateway down with it.
+  Two entry points:
+
+    * `run/2`           - one-shot, parsed JSON response.
+    * `stream_into/3`   - NDJSON streaming via `--output-format stream-json`,
+                          piping each event into the caller's `Plug.Conn`
+                          as a server-sent event.
+
+  Each invocation is supervised so a stuck or crashing `claude` cannot take
+  the gateway down with it.
   """
 
   require Logger
@@ -13,6 +19,9 @@ defmodule ClaudePGateway.Claude do
 
   @default_timeout_ms 5 * 60 * 1000
 
+  @doc """
+  Run `claude -p` once and return the parsed JSON result.
+  """
   @spec run(String.t(), keyword()) :: {:ok, result()} | {:error, term()}
   def run(prompt, opts \\ []) when is_binary(prompt) do
     timeout = Keyword.get(opts, :timeout, @default_timeout_ms)
@@ -48,6 +57,88 @@ defmodule ClaudePGateway.Claude do
     end
   rescue
     e in ErlangError -> {:error, {:spawn_failed, Exception.message(e)}}
+  end
+
+  @doc """
+  Stream `claude -p --output-format stream-json --verbose` into the given
+  `Plug.Conn`. The conn must already have been put into chunked mode with
+  `send_chunked/2`. Returns the (possibly updated) conn.
+  """
+  @spec stream_into(Plug.Conn.t(), String.t(), keyword()) :: Plug.Conn.t()
+  def stream_into(conn, prompt, opts \\ []) when is_binary(prompt) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout_ms)
+    model = Keyword.get(opts, :model)
+
+    args =
+      ["-p", prompt, "--output-format", "stream-json", "--verbose"]
+      |> maybe_add_model(model)
+
+    case System.find_executable(claude_bin()) do
+      nil ->
+        write_sse(conn, "error", %{type: "spawn_failed", message: "claude binary not found"})
+
+      path ->
+        port =
+          Port.open({:spawn_executable, path}, [
+            :binary,
+            :exit_status,
+            :hide,
+            :stderr_to_stdout,
+            {:args, args},
+            {:line, 65_536}
+          ])
+
+        stream_loop(conn, port, timeout, "")
+    end
+  end
+
+  defp stream_loop(conn, port, timeout, buffer) do
+    receive do
+      {^port, {:data, {:eol, line}}} ->
+        full = buffer <> line
+        conn = forward_event(conn, full)
+        stream_loop(conn, port, timeout, "")
+
+      {^port, {:data, {:noeol, chunk}}} ->
+        stream_loop(conn, port, timeout, buffer <> chunk)
+
+      {^port, {:exit_status, 0}} ->
+        write_sse(conn, "done", %{ok: true})
+
+      {^port, {:exit_status, code}} ->
+        write_sse(conn, "error", %{type: "claude_exit", code: code})
+    after
+      timeout ->
+        _ = Port.info(port) && Port.close(port)
+        write_sse(conn, "error", %{type: "timeout"})
+    end
+  end
+
+  defp forward_event(conn, line) do
+    trimmed = String.trim(line)
+
+    cond do
+      trimmed == "" ->
+        conn
+
+      String.starts_with?(trimmed, "{") ->
+        case Jason.decode(trimmed) do
+          {:ok, event} -> write_sse(conn, Map.get(event, "type", "message"), event)
+          {:error, _} -> conn
+        end
+
+      true ->
+        conn
+    end
+  end
+
+  defp write_sse(conn, event, payload) do
+    data = "event: #{event}\ndata: #{Jason.encode!(payload)}\n\n"
+
+    case Plug.Conn.chunk(conn, data) do
+      {:ok, conn} -> conn
+      {:error, _} -> conn
+    end
   end
 
   defp maybe_add_model(args, nil), do: args

@@ -48,23 +48,22 @@ curl -s http://localhost:4000/v1/messages \
 
 ## VPS deploy
 
-1. Install Erlang/OTP and Elixir on the VPS (e.g. via `asdf` or distro packages).
-2. Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`.
-3. Authenticate locally (`claude` → `/login` → pick your Claude.ai subscription account).
-4. Copy auth state from laptop to VPS:
-   ```sh
-   scp ~/.claude/.credentials.json vps:~/.claude/.credentials.json
-   scp ~/.claude.json vps:~/.claude.json
-   ```
-5. On the VPS, verify with `claude -p "hello"` before starting the gateway.
-6. Build a release: `MIX_ENV=prod mix release`. Run under systemd, behind Caddy/Nginx for TLS.
+Full rollout guide — service user, release build, systemd unit, Caddy + TLS, dashboard auth — in **[deploy/README.md](./deploy/README.md)**.
 
-Required prod env: `GATEWAY_TOKEN`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER=true`.
+TL;DR:
+
+1. Authenticate `claude` locally, copy `~/.claude/.credentials.json` and `~/.claude.json` to the service user's home on the VPS.
+2. `MIX_ENV=prod mix release`, rsync the release to `/opt/claude-p-gateway`.
+3. Drop `deploy/systemd/claude-p-gateway.service` in place, fill in `/etc/claude-p-gateway/env`, `systemctl enable --now claude-p-gateway`.
+4. Front with the [`deploy/caddy/Caddyfile.example`](./deploy/caddy/Caddyfile.example) for automatic TLS.
+
+Required prod env: `GATEWAY_TOKEN`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER=true`. Optional: `DASHBOARD_USER`/`DASHBOARD_PASS` to expose the BasicAuth-gated LiveDashboard at `/admin/dashboard`.
 
 ## Endpoints
 
 - `GET /health` — unauthenticated liveness probe.
-- `POST /v1/messages` — Anthropic-shaped request, returns Anthropic-shaped response. Bearer auth required.
+- `POST /v1/messages` — Anthropic-shaped request, returns Anthropic-shaped response. Bearer auth required. Pass `"stream": true` in the body to upgrade to SSE; events are emitted as `event: <type>\ndata: <json>\n\n` with a final `event: done` on clean exit.
+- `GET /admin/dashboard` — Phoenix LiveDashboard, BasicAuth-gated. Returns 404 unless `DASHBOARD_USER` and `DASHBOARD_PASS` are set.
 
 ## Architecture notes
 

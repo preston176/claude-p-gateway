@@ -1,0 +1,26 @@
+# Drop into /etc/caddy/Caddyfile (or a sites-enabled fragment) and reload Caddy.
+# Caddy will provision and renew TLS automatically via Let's Encrypt.
+
+gateway.example.com {
+    encode zstd gzip
+
+    # SSE needs flushed writes; disable buffering on the streaming route.
+    @stream path /v1/messages
+    handle @stream {
+        reverse_proxy 127.0.0.1:4000 {
+            flush_interval -1
+            transport http {
+                read_buffer 4096
+            }
+        }
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:4000
+    }
+
+    log {
+        output file /var/log/caddy/claude-p-gateway.log
+        format json
+    }
+}

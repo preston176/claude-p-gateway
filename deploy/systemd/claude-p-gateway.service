@@ -1,0 +1,33 @@
+[Unit]
+Description=claude-p-gateway (Elixir/Phoenix gateway over `claude -p`)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=gateway
+Group=gateway
+WorkingDirectory=/opt/claude-p-gateway
+EnvironmentFile=/etc/claude-p-gateway/env
+ExecStart=/opt/claude-p-gateway/bin/server
+ExecStop=/opt/claude-p-gateway/bin/claude_p_gateway stop
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# The `claude` CLI reads/writes credentials in $HOME; make sure
+# the service user's home is the same one you scp'd the auth files
+# into. The default homedir for a system user is /var/lib/<name>.
+Environment=HOME=/var/lib/gateway
+
+# Sensible hardening defaults. Loosen if you trip over something.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/claude-p-gateway /var/lib/gateway
+
+[Install]
+WantedBy=multi-user.target

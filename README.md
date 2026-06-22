@@ -2,6 +2,19 @@
 
 Minimal Anthropic-compatible HTTP gateway that proxies requests to a locally-authenticated `claude -p`. Lets other tools call your Claude Code CLI (authenticated with a Claude.ai subscription) over the network without consuming API credits.
 
+## Disclaimer — personal use only
+
+This project exists for **personal automation on your own infrastructure, against your own Claude.ai subscription, called only by you.** That is the only use I (the author) endorse or support.
+
+I do **not** accept, sanction, or assist any of the following:
+
+- Commercialization — wrapping this in a product, reselling access, or offering it as a service to other users.
+- Subscription pooling, account sharing, or any "relay-as-a-service" pattern that fans subscription access out to third parties.
+- Bounties, payments, sponsorships, or any other incentive offered in exchange for sharing, leaking, or otherwise distributing Claude.ai account credentials, OAuth tokens, or session state. I will refuse such offers and report attempts to coordinate them.
+- Use that violates [Anthropic's Usage Policy](https://www.anthropic.com/legal/aup) or the [Claude.ai Consumer Terms](https://www.anthropic.com/legal/consumer-terms).
+
+Using this code is at your own risk. Anthropic actively enforces against subscription-relay abuse — throttling, suspension, and termination are all on the table. You are solely responsible for staying within the ToS that govern your own account. No warranty of any kind is provided; see [LICENSE](./LICENSE).
+
 ## Stack
 
 - Bun + Hono
@@ -46,5 +59,5 @@ curl -s http://localhost:8787/v1/messages \
 ## Caveats
 
 - Subscription rate limits still apply (5-hour windows on Max).
-- Using a Claude.ai subscription as a backend for unrelated services may violate Anthropic's ToS. Intended for personal automations only.
+- See the [Disclaimer](#disclaimer--personal-use-only) above — personal use only, no commercialization, no credential sharing.
 - No streaming yet. Add `--output-format stream-json` and SSE when needed.

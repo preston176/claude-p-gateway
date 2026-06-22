@@ -1,7 +1,7 @@
 defmodule ClaudePGatewayWeb.MessagesController do
   use ClaudePGatewayWeb, :controller
 
-  alias ClaudePGateway.Claude
+  defp claude, do: Application.get_env(:claude_p_gateway, :claude_module, ClaudePGateway.Claude)
 
   def create(conn, %{"messages" => messages} = params) when is_list(messages) and messages != [] do
     prompt = build_prompt(messages, Map.get(params, "system"))
@@ -19,7 +19,7 @@ defmodule ClaudePGatewayWeb.MessagesController do
   end
 
   defp one_shot(conn, prompt, model) do
-    case Claude.run(prompt, model: model) do
+    case claude().run(prompt, model: model) do
       {:ok, %{text: text, raw: raw}} ->
         json(conn, response_envelope(text, model, raw))
 
@@ -40,7 +40,7 @@ defmodule ClaudePGatewayWeb.MessagesController do
     |> put_resp_header("cache-control", "no-cache")
     |> put_resp_header("connection", "keep-alive")
     |> send_chunked(200)
-    |> Claude.stream_into(prompt, model: model)
+    |> claude().stream_into(prompt, model: model)
   end
 
   defp truthy?(true), do: true

@@ -27,6 +27,7 @@ gateway_token =
   case {config_env(), System.get_env("GATEWAY_TOKEN")} do
     {_, token} when is_binary(token) and byte_size(token) > 0 -> token
     {:prod, _} -> raise "GATEWAY_TOKEN is required in production. Generate one with: mix phx.gen.secret 64"
+    {:test, _} -> "test-token"
     {_, _} -> "dev-token-change-me"
   end
 

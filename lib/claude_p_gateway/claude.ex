@@ -13,6 +13,8 @@ defmodule ClaudePGateway.Claude do
   the gateway down with it.
   """
 
+  @behaviour ClaudePGateway.ClaudeBehaviour
+
   require Logger
 
   @type result :: %{text: String.t(), raw: map()}

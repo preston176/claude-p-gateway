@@ -7,6 +7,8 @@ config :claude_p_gateway, ClaudePGatewayWeb.Endpoint,
   secret_key_base: "uR7EyS2DwOlI/5LzfYlGNvBtGtZH4l0JkWNm16WGvm/Mplq+2vo7lM+q1t+ZjsCw",
   server: false
 
+config :claude_p_gateway, :claude_module, ClaudePGateway.MockClaude
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

@@ -36,6 +36,14 @@ if claude_bin = System.get_env("CLAUDE_BIN") do
   config :claude_p_gateway, :claude_bin, claude_bin
 end
 
+case {System.get_env("DASHBOARD_USER"), System.get_env("DASHBOARD_PASS")} do
+  {user, pass} when is_binary(user) and is_binary(pass) and byte_size(user) > 0 and byte_size(pass) > 0 ->
+    config :claude_p_gateway, :dashboard_auth, username: user, password: pass
+
+  _ ->
+    :ok
+end
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

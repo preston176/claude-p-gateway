@@ -1,6 +1,8 @@
 defmodule ClaudePGatewayWeb.Router do
   use ClaudePGatewayWeb, :router
 
+  import Phoenix.LiveDashboard.Router
+
   pipeline :api do
     plug :accepts, ["json"]
   end
@@ -8,6 +10,12 @@ defmodule ClaudePGatewayWeb.Router do
   pipeline :authed_api do
     plug :accepts, ["json"]
     plug ClaudePGatewayWeb.Plugs.BearerAuth
+  end
+
+  pipeline :dashboard do
+    plug :fetch_session
+    plug :protect_from_forgery
+    plug :dashboard_auth
   end
 
   scope "/", ClaudePGatewayWeb do
@@ -22,12 +30,21 @@ defmodule ClaudePGatewayWeb.Router do
     post "/messages", MessagesController, :create
   end
 
-  if Application.compile_env(:claude_p_gateway, :dev_routes) do
-    import Phoenix.LiveDashboard.Router
+  scope "/admin" do
+    pipe_through :dashboard
 
-    scope "/dev" do
-      pipe_through [:fetch_session, :protect_from_forgery]
-      live_dashboard "/dashboard", metrics: ClaudePGatewayWeb.Telemetry
+    live_dashboard "/dashboard", metrics: ClaudePGatewayWeb.Telemetry
+  end
+
+  defp dashboard_auth(conn, _opts) do
+    case Application.get_env(:claude_p_gateway, :dashboard_auth) do
+      [username: user, password: pass] when is_binary(user) and is_binary(pass) ->
+        Plug.BasicAuth.basic_auth(conn, username: user, password: pass)
+
+      _ ->
+        conn
+        |> Plug.Conn.send_resp(404, "")
+        |> Plug.Conn.halt()
     end
   end
 end

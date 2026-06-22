@@ -1,6 +1,10 @@
 # claude-p-gateway
 
-Minimal Anthropic-compatible HTTP gateway that proxies requests to a locally-authenticated `claude -p`. Lets other tools call your Claude Code CLI (authenticated with a Claude.ai subscription) over the network without consuming API credits.
+Self-hosted, Anthropic-compatible HTTP gateway that proxies `/v1/messages` to a locally-authenticated `claude -p`. Lets a Claude.ai subscription back your personal tooling instead of metered API credits.
+
+Built on Phoenix (API-only) + Bandit, with each subprocess invocation supervised under a `Task.Supervisor` so a stuck or crashing `claude` call cannot take the gateway down.
+
+> **Previous Bun + Hono implementation lives on the `bun-legacy` branch.**
 
 ## Disclaimer — personal use only
 
@@ -15,29 +19,28 @@ I do **not** accept, sanction, or assist any of the following:
 
 Using this code is at your own risk. Anthropic actively enforces against subscription-relay abuse — throttling, suspension, and termination are all on the table. You are solely responsible for staying within the ToS that govern your own account.
 
-## License
-
-Released under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Personal and noncommercial use is permitted; commercial use is not. No warranty of any kind is provided.
-
 ## Stack
 
-- Bun + Hono
-- Shells out to `claude -p --output-format json`
-- Bearer-token auth at the gateway boundary
+- Elixir 1.19, OTP 29
+- Phoenix 1.8 (no HTML, no assets, no Ecto) on Bandit
+- `Task.Supervisor` per request, isolating each `claude -p` subprocess
 
 ## Setup
 
+Requires Elixir/OTP and the `claude` CLI installed and authenticated against your Claude.ai subscription.
+
 ```sh
-bun install
-cp .env.example .env
-# edit .env, set a long random GATEWAY_TOKEN
-bun run dev
+mix deps.get
+cp .env.example .env  # edit GATEWAY_TOKEN
+mix phx.server
 ```
 
 Smoke test:
 
 ```sh
-curl -s http://localhost:8787/v1/messages \
+curl -s http://localhost:4000/health
+
+curl -s http://localhost:4000/v1/messages \
   -H "Authorization: Bearer $GATEWAY_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"say hi in five words"}]}'
@@ -45,23 +48,30 @@ curl -s http://localhost:8787/v1/messages \
 
 ## VPS deploy
 
-1. Install Claude Code on the VPS: `curl -fsSL https://claude.ai/install.sh | bash`
-2. Authenticate locally (`claude` → `/login` → pick your Claude.ai subscription account)
-3. Copy auth state from laptop to VPS:
+1. Install Erlang/OTP and Elixir on the VPS (e.g. via `asdf` or distro packages).
+2. Install Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`.
+3. Authenticate locally (`claude` → `/login` → pick your Claude.ai subscription account).
+4. Copy auth state from laptop to VPS:
    ```sh
    scp ~/.claude/.credentials.json vps:~/.claude/.credentials.json
    scp ~/.claude.json vps:~/.claude.json
    ```
-4. On the VPS, verify with `claude -p "hello"` before starting the gateway.
-5. Run as a service (systemd unit or `pm2`); proxy via Caddy/Nginx for TLS.
+5. On the VPS, verify with `claude -p "hello"` before starting the gateway.
+6. Build a release: `MIX_ENV=prod mix release`. Run under systemd, behind Caddy/Nginx for TLS.
+
+Required prod env: `GATEWAY_TOKEN`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER=true`.
 
 ## Endpoints
 
-- `GET /health` — unauthenticated liveness
-- `POST /v1/messages` — Anthropic-shaped request, returns Anthropic-shaped response
+- `GET /health` — unauthenticated liveness probe.
+- `POST /v1/messages` — Anthropic-shaped request, returns Anthropic-shaped response. Bearer auth required.
 
-## Caveats
+## Architecture notes
 
-- Subscription rate limits still apply (5-hour windows on Max).
-- See the [Disclaimer](#disclaimer--personal-use-only) above — personal use only, no commercialization, no credential sharing.
-- No streaming yet. Add `--output-format stream-json` and SSE when needed.
+- `ClaudePGateway.Claude.run/2` spawns each `claude -p` invocation inside a supervised `Task` with a 5-minute timeout. Crashes, hangs, and non-zero exits are caught and surfaced as structured JSON errors rather than 500s.
+- The gateway token is read at runtime via `config/runtime.exs` from `GATEWAY_TOKEN`; auth is constant-time via `Plug.Crypto.secure_compare/2`.
+- No streaming yet. Planned: add `--output-format stream-json` and SSE via `Plug.Conn.chunk/2`.
+
+## License
+
+Released under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Personal and noncommercial use is permitted; commercial use is not. No warranty of any kind is provided.

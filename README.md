@@ -13,7 +13,11 @@ I do **not** accept, sanction, or assist any of the following:
 - Bounties, payments, sponsorships, or any other incentive offered in exchange for sharing, leaking, or otherwise distributing Claude.ai account credentials, OAuth tokens, or session state. I will refuse such offers and report attempts to coordinate them.
 - Use that violates [Anthropic's Usage Policy](https://www.anthropic.com/legal/aup) or the [Claude.ai Consumer Terms](https://www.anthropic.com/legal/consumer-terms).
 
-Using this code is at your own risk. Anthropic actively enforces against subscription-relay abuse — throttling, suspension, and termination are all on the table. You are solely responsible for staying within the ToS that govern your own account. No warranty of any kind is provided; see [LICENSE](./LICENSE).
+Using this code is at your own risk. Anthropic actively enforces against subscription-relay abuse — throttling, suspension, and termination are all on the table. You are solely responsible for staying within the ToS that govern your own account.
+
+## License
+
+Released under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Personal and noncommercial use is permitted; commercial use is not. No warranty of any kind is provided.
 
 ## Stack
 

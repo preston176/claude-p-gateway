@@ -4,13 +4,30 @@ defmodule ClaudePGatewayWeb.MessagesController do
   defp claude, do: Application.get_env(:claude_p_gateway, :claude_module, ClaudePGateway.Claude)
 
   def create(conn, %{"messages" => messages} = params) when is_list(messages) and messages != [] do
-    prompt = build_prompt(messages, Map.get(params, "system"))
-    model = Map.get(params, "model")
+    case ClaudePGateway.RateLimiter.check() do
+      :ok ->
+        prompt = build_prompt(messages, Map.get(params, "system"))
+        model = Map.get(params, "model")
 
-    if truthy?(Map.get(params, "stream")) do
-      stream(conn, prompt, model)
-    else
-      one_shot(conn, prompt, model)
+        if truthy?(Map.get(params, "stream")) do
+          stream(conn, prompt, model)
+        else
+          one_shot(conn, prompt, model)
+        end
+
+      {:error, :rate_limited, retry_after_ms} ->
+        retry_after_s = max(1, div(retry_after_ms + 999, 1000))
+
+        conn
+        |> put_resp_header("retry-after", to_string(retry_after_s))
+        |> put_status(429)
+        |> json(%{
+          error: %{
+            type: "rate_limited",
+            message: "rate limit exceeded; retry in #{retry_after_s}s",
+            retry_after_ms: retry_after_ms
+          }
+        })
     end
   end
 

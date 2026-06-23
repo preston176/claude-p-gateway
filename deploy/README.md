@@ -1,6 +1,6 @@
 # Deploying claude-p-gateway
 
-VPS rollout for a single-user, personal-use deploy. Assumes a Debian/Ubuntu host with `systemd` and a working `caddy` install.
+VPS rollout for a single-user, personal-use deploy. Assumes a Debian or Ubuntu host with `systemd` and a working `caddy` install.
 
 ## 0. Provision a service user
 
@@ -12,7 +12,7 @@ sudo install -d -o root   -g root   -m 755 /etc/claude-p-gateway
 
 ## 1. Install Erlang/OTP, Elixir, and the `claude` CLI on the VPS
 
-Use `asdf`, `mise`, or distro packages — whichever you already use. Then:
+Use `asdf`, `mise`, or distro packages, whichever you already use. Then:
 
 ```sh
 curl -fsSL https://claude.ai/install.sh | bash
@@ -86,13 +86,19 @@ sudo systemctl reload caddy
 
 DNS: point `gateway.example.com` A/AAAA at the VPS first; Caddy will obtain a cert on next request.
 
-## 6. (Optional) Enable the LiveDashboard
+## 6. (Optional) Enable the admin pages
 
-Set `DASHBOARD_USER` + `DASHBOARD_PASS` in `/etc/claude-p-gateway/env` and `systemctl restart claude-p-gateway`. The dashboard becomes available at `https://gateway.example.com/admin/dashboard`. Without these vars set, the route returns 404.
+Set `DASHBOARD_USER` and `DASHBOARD_PASS` in `/etc/claude-p-gateway/env` and `systemctl restart claude-p-gateway`. Two routes become available behind that BasicAuth:
+
+- `https://gateway.example.com/admin/settings` for rotating the gateway token and tuning the rate limit at runtime.
+- `https://gateway.example.com/admin/dashboard` for the Phoenix LiveDashboard.
+
+Without the env vars set, both routes return 404. Make sure `STATE_PATH` is also set if you want changes from the settings page to survive restarts.
 
 ## Operating tips
 
-- `journalctl -u claude-p-gateway -f` — tail logs.
-- `sudo systemctl restart claude-p-gateway` — restart after editing the env file.
-- The `claude` CLI may rotate OAuth tokens; if calls start failing with auth errors, re-run `claude` interactively on your laptop and re-copy `~/.claude/.credentials.json` to the VPS.
-- Subscription rate limits apply. If you start hitting them, the gateway has no built-in backoff yet — add one before scaling traffic.
+- `journalctl -u claude-p-gateway -f` to tail logs.
+- `sudo systemctl restart claude-p-gateway` after editing the env file (changes to `/etc/claude-p-gateway/env` are only loaded on start).
+- The `claude` CLI may rotate OAuth tokens. If calls start failing with auth errors, re-run `claude` interactively on your laptop and re-copy `~/.claude/.credentials.json` to the VPS.
+- Subscription rate limits still apply. The built-in token bucket at `/admin/settings` clips concurrent calls before they hit Anthropic, but if you start hitting Claude's own 5-hour windows the gateway has no awareness of it. Lower the bucket capacity to throttle yourself further.
+- Setting `STATE_PATH=/var/lib/gateway/state.json` is strongly recommended so that any rate-limit or token changes made from `/admin/settings` survive restarts. Without it the values revert to whatever's in the env file on every boot.

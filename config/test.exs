@@ -9,6 +9,13 @@ config :claude_p_gateway, ClaudePGatewayWeb.Endpoint,
 
 config :claude_p_gateway, :claude_module, ClaudePGateway.MockClaude
 
+# Effectively disable the rate limiter under test; tests that exercise
+# rate limiting clamp it down explicitly via Settings.update/1.
+config :claude_p_gateway, :settings_defaults, %{
+  rate_limit_capacity: 1_000_000,
+  rate_limit_refill_per_minute: 1_000_000
+}
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

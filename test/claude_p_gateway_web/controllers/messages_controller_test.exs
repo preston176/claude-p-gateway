@@ -1,5 +1,6 @@
 defmodule ClaudePGatewayWeb.MessagesControllerTest do
-  use ClaudePGatewayWeb.ConnCase, async: true
+  # async: false because the 429 test mutates global RateLimiter / Settings.
+  use ClaudePGatewayWeb.ConnCase, async: false
 
   import Mox
 
@@ -123,6 +124,28 @@ defmodule ClaudePGatewayWeb.MessagesControllerTest do
 
       conn = post(conn, ~p"/v1/messages", %{messages: [%{role: "user", content: "hi"}]})
       assert json_response(conn, 500)["error"]["type"] == "internal_error"
+    end
+
+    test "returns 429 when rate limiter is empty", %{conn: conn} do
+      original = ClaudePGateway.Settings.all()
+
+      try do
+        ClaudePGateway.Settings.update(%{rate_limit_capacity: 1, rate_limit_refill_per_minute: 1})
+        Enum.each(1..2, fn _ -> ClaudePGateway.RateLimiter.check() end)
+
+        conn = post(conn, ~p"/v1/messages", %{messages: [%{role: "user", content: "hi"}]})
+        body = json_response(conn, 429)
+        assert body["error"]["type"] == "rate_limited"
+        assert is_integer(body["error"]["retry_after_ms"])
+        assert get_resp_header(conn, "retry-after") != []
+      after
+        ClaudePGateway.Settings.update(%{
+          rate_limit_capacity: original.rate_limit_capacity,
+          rate_limit_refill_per_minute: original.rate_limit_refill_per_minute
+        })
+
+        ClaudePGateway.RateLimiter.reset()
+      end
     end
 
     test "routes stream=true to stream_into/3", %{conn: conn} do

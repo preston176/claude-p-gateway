@@ -10,6 +10,8 @@ defmodule ClaudePGateway.Application do
       {DNSCluster, query: Application.get_env(:claude_p_gateway, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: ClaudePGateway.PubSub},
       {Task.Supervisor, name: ClaudePGateway.TaskSupervisor},
+      ClaudePGateway.Settings,
+      ClaudePGateway.RateLimiter,
       ClaudePGatewayWeb.Endpoint
     ]
 

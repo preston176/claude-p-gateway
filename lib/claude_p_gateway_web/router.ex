@@ -12,6 +12,13 @@ defmodule ClaudePGatewayWeb.Router do
     plug ClaudePGatewayWeb.Plugs.BearerAuth
   end
 
+  pipeline :admin_browser do
+    plug :accepts, ["html"]
+    plug :fetch_session
+    plug :protect_from_forgery
+    plug :dashboard_auth
+  end
+
   pipeline :dashboard do
     plug :fetch_session
     plug :protect_from_forgery
@@ -28,6 +35,15 @@ defmodule ClaudePGatewayWeb.Router do
     pipe_through :authed_api
 
     post "/messages", MessagesController, :create
+  end
+
+  scope "/admin", ClaudePGatewayWeb do
+    pipe_through :admin_browser
+
+    get "/", AdminController, :show
+    get "/settings", AdminController, :show
+    post "/settings", AdminController, :update
+    post "/settings/rotate_token", AdminController, :rotate_token
   end
 
   scope "/admin" do

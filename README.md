@@ -2,7 +2,7 @@
 
 A small HTTP server in front of the `claude` CLI. Send it a request shaped like Anthropic's `/v1/messages`, it shells out to `claude -p`, and hands the response back. The point is to route work through a Claude.ai subscription you already pay for, instead of buying API credits on top.
 
-Phoenix on Bandit, API only, no Ecto. Each call to `claude -p` runs inside a supervised task so a stuck or crashing CLI invocation cannot take the gateway down with it.
+Phoenix on Bandit, API only, no Ecto. Each call to `claude -p` runs inside a supervised task so a stuck or crashing CLI invocation cannot take the gateway down with it. Streaming responses are translated into Anthropic's `/v1/messages` event vocabulary, and a global token-bucket sits in front of the CLI so concurrent calls cannot burn through a subscription window unchecked.
 
 > The earlier Bun and Hono version of this is still around on the `bun-legacy` branch if you want to compare.
 
@@ -21,7 +21,7 @@ Use this at your own risk. Anthropic does enforce against people using subscript
 
 ## Stack
 
-Elixir 1.19 on OTP 29. Phoenix 1.8 (no HTML, no assets, no mailer, no Ecto) running on Bandit. Most of the actual work happens inside the `claude` binary; the gateway is a thin routing and supervision layer around `System.cmd` and `Port`.
+Elixir 1.19 on OTP 29. Phoenix 1.8 (no HTML templates, no assets pipeline, no mailer, no Ecto) running on Bandit. Most of the actual work happens inside the `claude` binary; the gateway is a thin routing and supervision layer around `System.cmd` and `Port`.
 
 ## Local setup
 
@@ -53,7 +53,7 @@ mix test
 
 ## Deploying to a VPS
 
-The full walkthrough lives in [`deploy/README.md`](./deploy/README.md). It covers the service user, copying `claude` credentials across, building the release, the systemd unit, Caddy with automatic TLS, and the optional dashboard.
+The full walkthrough lives in [`deploy/README.md`](./deploy/README.md). It covers the service user, copying `claude` credentials across, building the release, the systemd unit, Caddy with automatic TLS, and the admin pages.
 
 Short version:
 
@@ -62,32 +62,35 @@ Short version:
 3. Drop `deploy/systemd/claude-p-gateway.service` into `/etc/systemd/system/`, fill out `/etc/claude-p-gateway/env`, then `systemctl enable --now claude-p-gateway`.
 4. Use [`deploy/caddy/Caddyfile.example`](./deploy/caddy/Caddyfile.example) as a starting point for TLS.
 
-Required production env vars: `GATEWAY_TOKEN`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER=true`. Set `DASHBOARD_USER` and `DASHBOARD_PASS` if you want the dashboard exposed.
+Required production env vars: `GATEWAY_TOKEN`, `SECRET_KEY_BASE`, `PHX_HOST`, `PHX_SERVER=true`. Strongly recommended: `STATE_PATH` so settings edited via the admin page survive restarts. Set `DASHBOARD_USER` and `DASHBOARD_PASS` if you want the admin pages exposed.
 
 ## Endpoints
 
 `GET /health` is an unauthenticated liveness probe. Returns `{"ok": true}`.
 
-`POST /v1/messages` takes an Anthropic-shaped request and returns an Anthropic-shaped response. Bearer auth required. Set `"stream": true` in the body to switch to server-sent events. Frames come back as `event: <type>\ndata: <json>\n\n`, with a final `event: done` once the CLI exits cleanly.
+`POST /v1/messages` takes an Anthropic-shaped request and returns an Anthropic-shaped response. Bearer auth required. Set `"stream": true` in the body to switch to server-sent events; frames come back in Anthropic's streaming vocabulary (`message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`). Returns `429` with a `Retry-After` header and a `retry_after_ms` field when the rate limiter is empty.
 
-`GET /admin/dashboard` is the Phoenix LiveDashboard behind BasicAuth. It returns 404 unless both `DASHBOARD_USER` and `DASHBOARD_PASS` are set, so unauthenticated probers cannot even discover it exists.
+`GET /admin/settings` is a small HTML form for rotating the gateway token and tuning the rate limit at runtime. Protected by the same BasicAuth credentials as the dashboard.
+
+`GET /admin/dashboard` is the Phoenix LiveDashboard. Both admin routes return `404` unless both `DASHBOARD_USER` and `DASHBOARD_PASS` are set, so unauthenticated probers cannot even discover they exist.
+
+## Runtime configuration
+
+The gateway token, rate limit capacity, and rate limit refill rate are held in a `Settings` GenServer that is seeded from environment variables on boot. The admin settings page can mutate any of them at runtime. If `STATE_PATH` is set, changes are persisted to that JSON file and survive restarts; otherwise they live in memory only.
+
+Rate limiting is a single global token bucket. The defaults are 60 tokens with a refill of 60 per minute, which is generous for a one-person personal workload. Tune to taste from `/admin/settings`.
 
 ## How it works
 
 `ClaudePGateway.Claude.run/2` runs each `claude -p` call inside a supervised task with a five-minute timeout. Crashes, hangs, and non-zero exits get caught and turned into structured JSON errors instead of bare 500s.
 
-Streaming opens a `Port` against `claude -p --output-format stream-json --verbose` and reads line by line. Each NDJSON event is forwarded as an SSE frame through `Plug.Conn.chunk/2`. stderr is folded into stdout and any non-JSON lines are dropped, so spurious diagnostic output from the CLI does not poison the event stream.
+Streaming opens a `Port` against `claude -p --output-format stream-json --verbose` and reads line by line. Each NDJSON event is fed through `ClaudePGateway.AnthropicTranslator`, which converts claude's native event vocabulary (`system/init`, `assistant`, `result`) into the Anthropic streaming vocabulary clients expect. stderr is folded into stdout and any non-JSON lines are dropped, so spurious diagnostic output from the CLI does not poison the event stream.
 
-The gateway token is loaded at runtime from `GATEWAY_TOKEN` in `config/runtime.exs`. The auth check uses `Plug.Crypto.secure_compare/2` so timing attacks against the token are not possible.
+Every request runs through `ClaudePGateway.RateLimiter.check/0` before the CLI is invoked. Failed checks short-circuit to a 429 with a `Retry-After` header derived from how many milliseconds the bucket needs to refill one token.
+
+The gateway token check is constant-time via `Plug.Crypto.secure_compare/2`. The token itself is held in `Settings`, so rotating it from `/admin/settings` takes effect on the very next request without a restart.
 
 Tests run against a Mox-generated implementation of `ClaudePGateway.ClaudeBehaviour`. The controller looks the implementation up out of application config, so the real `claude` binary is never invoked under test.
-
-## What is missing
-
-A couple of honest gaps worth knowing about:
-
-- The streaming endpoint forwards `claude`'s raw stream-json events as-is. Clients that expect the full Anthropic event vocabulary (`message_start`, `content_block_delta`, and so on) will need a small translator on top. Not hard to add, just not done yet.
-- There is no rate-limit-aware queue. If you fan out concurrent calls you can burn through a subscription window with no graceful degradation. A token bucket in front of `Claude.run/2` would fix this and would be the next sensible thing to build.
 
 ## License
 

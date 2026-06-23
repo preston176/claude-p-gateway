@@ -1,19 +1,21 @@
 defmodule ClaudePGatewayWeb.Plugs.BearerAuth do
   @moduledoc """
-  Requires `Authorization: Bearer <token>` matching the configured gateway
-  token. The token is read from the `:claude_p_gateway, :gateway_token`
-  application env, populated at runtime from `GATEWAY_TOKEN`.
+  Requires `Authorization: Bearer <token>` matching the current gateway
+  token from `ClaudePGateway.Settings`. The token can be rotated at
+  runtime via the admin page; this plug always reads the latest value.
   """
 
   import Plug.Conn
 
+  alias ClaudePGateway.Settings
+
   def init(opts), do: opts
 
   def call(conn, _opts) do
-    expected = Application.fetch_env!(:claude_p_gateway, :gateway_token)
+    expected = Settings.get(:gateway_token) || ""
 
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         true <- Plug.Crypto.secure_compare(token, expected) do
+         true <- expected != "" and Plug.Crypto.secure_compare(token, expected) do
       conn
     else
       _ ->

@@ -6,8 +6,9 @@ defmodule ClaudePGateway.Claude do
 
     * `run/2`           - one-shot, parsed JSON response.
     * `stream_into/3`   - NDJSON streaming via `--output-format stream-json`,
-                          piping each event into the caller's `Plug.Conn`
-                          as a server-sent event.
+                          translated to Anthropic-shaped SSE events through
+                          `ClaudePGateway.AnthropicTranslator` and written
+                          straight onto the supplied `Plug.Conn`.
 
   Each invocation is supervised so a stuck or crashing `claude` cannot take
   the gateway down with it.
@@ -16,6 +17,8 @@ defmodule ClaudePGateway.Claude do
   @behaviour ClaudePGateway.ClaudeBehaviour
 
   require Logger
+
+  alias ClaudePGateway.AnthropicTranslator
 
   @type result :: %{text: String.t(), raw: map()}
 
@@ -63,8 +66,8 @@ defmodule ClaudePGateway.Claude do
 
   @doc """
   Stream `claude -p --output-format stream-json --verbose` into the given
-  `Plug.Conn`. The conn must already have been put into chunked mode with
-  `send_chunked/2`. Returns the (possibly updated) conn.
+  `Plug.Conn` as Anthropic-shaped SSE events. The conn must already have
+  been put into chunked mode with `send_chunked/2`.
   """
   @spec stream_into(Plug.Conn.t(), String.t(), keyword()) :: Plug.Conn.t()
   def stream_into(conn, prompt, opts \\ []) when is_binary(prompt) do
@@ -77,7 +80,7 @@ defmodule ClaudePGateway.Claude do
 
     case System.find_executable(claude_bin()) do
       nil ->
-        write_sse(conn, "error", %{type: "spawn_failed", message: "claude binary not found"})
+        write_raw_sse(conn, "error", %{type: "spawn_failed", message: "claude binary not found"})
 
       path ->
         port =
@@ -90,51 +93,63 @@ defmodule ClaudePGateway.Claude do
             {:line, 65_536}
           ])
 
-        stream_loop(conn, port, timeout, "")
+        stream_loop(conn, port, timeout, "", AnthropicTranslator.new())
     end
   end
 
-  defp stream_loop(conn, port, timeout, buffer) do
+  defp stream_loop(conn, port, timeout, buffer, translator) do
     receive do
       {^port, {:data, {:eol, line}}} ->
         full = buffer <> line
-        conn = forward_event(conn, full)
-        stream_loop(conn, port, timeout, "")
+        {conn, translator} = forward_line(conn, translator, full)
+        stream_loop(conn, port, timeout, "", translator)
 
       {^port, {:data, {:noeol, chunk}}} ->
-        stream_loop(conn, port, timeout, buffer <> chunk)
+        stream_loop(conn, port, timeout, buffer <> chunk, translator)
 
       {^port, {:exit_status, 0}} ->
-        write_sse(conn, "done", %{ok: true})
+        conn
 
       {^port, {:exit_status, code}} ->
-        write_sse(conn, "error", %{type: "claude_exit", code: code})
+        write_raw_sse(conn, "error", %{type: "claude_exit", code: code})
     after
       timeout ->
         _ = Port.info(port) && Port.close(port)
-        write_sse(conn, "error", %{type: "timeout"})
+        write_raw_sse(conn, "error", %{type: "timeout"})
     end
   end
 
-  defp forward_event(conn, line) do
+  defp forward_line(conn, translator, line) do
     trimmed = String.trim(line)
 
     cond do
       trimmed == "" ->
-        conn
+        {conn, translator}
 
       String.starts_with?(trimmed, "{") ->
         case Jason.decode(trimmed) do
-          {:ok, event} -> write_sse(conn, Map.get(event, "type", "message"), event)
-          {:error, _} -> conn
+          {:ok, event} ->
+            {events, translator} = AnthropicTranslator.translate(translator, event)
+            conn = Enum.reduce(events, conn, &write_translated_event(&2, &1))
+            {conn, translator}
+
+          {:error, _} ->
+            {conn, translator}
         end
 
       true ->
-        conn
+        {conn, translator}
     end
   end
 
-  defp write_sse(conn, event, payload) do
+  defp write_translated_event(conn, event) do
+    case Plug.Conn.chunk(conn, AnthropicTranslator.encode_sse(event)) do
+      {:ok, conn} -> conn
+      {:error, _} -> conn
+    end
+  end
+
+  defp write_raw_sse(conn, event, payload) do
     data = "event: #{event}\ndata: #{Jason.encode!(payload)}\n\n"
 
     case Plug.Conn.chunk(conn, data) do
